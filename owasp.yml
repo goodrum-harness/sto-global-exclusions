@@ -1,0 +1,9 @@
+---
+binaries:
+  yarn: /shared/customer_artifacts/tools/yarn
+  pnpm: /shared/customer_artifacts/tools/pnpm
+exclusions:
+  - "**/*.exe"
+  - "backend/**"
+remove_files:
+  - "**/yarn.lock"
