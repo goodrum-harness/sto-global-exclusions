@@ -51,9 +51,10 @@ OUTPUT=""
 globals_scanner_file=$(yq ${SCANNER}.yml --output-format json | jq -c '.')
 
 override_files=(
-    "overrides/${SCANNER}/${ORGANIZATION}/${SCANNER}.yml"
-    "overrides/${SCANNER}/${ORGANIZATION}/${PROJECT}/${SCANNER}.yml"
-    "overrides/${SCANNER}/${ORGANIZATION}/${PROJECT}/${PIPELINE}/${SCANNER}.yml"
+    ${SCANNER}.yml
+    "overrides/${ORGANIZATION}/${SCANNER}.yml"
+    "overrides/${ORGANIZATION}/${PROJECT}/${SCANNER}.yml"
+    "overrides/${ORGANIZATION}/${PROJECT}/${PIPELINE}/${SCANNER}.yml"
 )
 echo ${globals_scanner_file} | jq -rc '.' > deployment_values.json
 
@@ -82,21 +83,27 @@ done
 globals_scanner_file=$(cat deployment_values.json | jq -c '.')
 rm -rf deployment_values.json values_tmp.json
 
-binaries=$(echo $globals_scanner_file | jq -rc '.binaries')
+binaries=$(echo $globals_scanner_file | jq -rc '.binaries // {}')
 for key in $(echo $binaries | jq -rc 'keys[]');
 do
-OUTPUT="${OUTPUT} --$key $(echo $binaries | jq -rc --arg keyName $key '.[$keyName]')"
+    OUTPUT="${OUTPUT} --$key $(echo $binaries | jq -rc --arg keyName $key '.[$keyName]')"
 done
 
-for i in $(echo ${globals_scanner_file} | jq -c '.exclusions[]');
+for i in $(echo ${globals_scanner_file} | jq -c '.exclusions // []' | jq -c '.[]');
 do
-OUTPUT="${OUTPUT} --exclude $i";
+    OUTPUT="${OUTPUT} --exclude $i";
 done
 
-for remove_file in $(echo ${globals_scanner_file} | jq -c '.remove_files[]');
+for remove_file in $(echo ${globals_scanner_file} | jq -c '.remove_files // []' | jq -c '.[]');
 do
-echo "Recursively removing any files that match - ${remove_file}"
-rm -rf /harness/$(echo $remove_file | tr -d '"');
+    echo "Recursively removing any files that match - ${remove_file}"
+    rm -rf /harness/$(echo $remove_file | tr -d '"');
+done
+
+for argument in $(echo ${globals_scanner_file} | jq -c '.standard_args // []' | jq -c '.[]');
+do
+    fmt_arg=$(echo $argument | tr -d '"')
+    OUTPUT="${OUTPUT} ${fmt_arg}";
 done
 
 echo $OUTPUT > output_file

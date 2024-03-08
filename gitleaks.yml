@@ -1,0 +1,4 @@
+standard_args:
+  - --exit-code 999
+  - --no-banner
+  - --redact
