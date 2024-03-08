@@ -1,0 +1,299 @@
+pipeline:
+  identifier: Demo_Application_STO_Refactor_Testing
+  name: Demo Application - STO Refactor Testing
+  projectIdentifier: Local_Testing
+  orgIdentifier: default
+  tags: {}
+  stages:
+    - stage:
+        spec:
+          caching:
+            enabled: false
+            paths: []
+          cloneCodebase: true
+          execution:
+            steps:
+              - stepGroup:
+                  name: Security Global Scanner Management
+                  identifier: Security_Global_Scanner_Management
+                  steps:
+                    - step:
+                        type: GitClone
+                        name: Security Global Exclusions Repo
+                        identifier: Security_Global_Exclusions_Repo
+                        spec:
+                          connectorRef: stoglobalexclusions
+                          repoName: sto-global-exclusions
+                          cloneDirectory: <+stage.variables.SHARED_ARTIFACTS>/sto-global-exclusions
+                          build:
+                            type: branch
+                            spec:
+                              branch: main
+                    - step:
+                        type: Run
+                        name: Download Overrides Manifest
+                        identifier: Download_Overrides_Manifest
+                        spec:
+                          connectorRef: DockerHub
+                          image: goodrumharness/harness-sto-exclusion-manager:latest
+                          shell: Bash
+                          command: |-
+                            set -eo pipefail
+                            echo $WORKDIR
+                            echo "Retrieving SEMGREP settings"
+                            /app/sto-override-handler.sh -s semgrep -w $WORKDIR -o <+org.identifier> -p <+project.identifier> -P <+pipeline.identifier>
+                            SEMGREP_ARGS=`cat $WORKDIR/output_file`
+
+                            echo "Retrieving OWASP settings"
+                            /app/sto-override-handler.sh -s owasp -w $WORKDIR -o <+org.identifier> -p <+project.identifier> -P <+pipeline.identifier>
+                            OWASP_ARGS=`cat $WORKDIR/output_file`
+
+                            echo "Retrieving GitLeaks settings"
+                            /app/sto-override-handler.sh -s gitleaks -w $WORKDIR -o <+org.identifier> -p <+project.identifier> -P <+pipeline.identifier>
+                            GITLEAKS_ARGS=`cat $WORKDIR/output_file`
+                          envVariables:
+                            WORKDIR: <+stage.variables.SHARED_ARTIFACTS>/sto-global-exclusions
+                          outputVariables:
+                            - name: SEMGREP_ARGS
+                            - name: OWASP_ARGS
+                            - name: GITLEAKS_ARGS
+              - step:
+                  identifier: Copy_Node_Binaries
+                  name: Copy Node Binaries
+                  spec:
+                    connectorRef: account.DockerHub
+                    image: node:20.11.0-alpine
+                    shell: Sh
+                    command: |-
+                      set -o pipefail
+                      currentDirectory=${PWD}
+                      copyYARN=false
+                      copyNPM=false
+                      copyPNPM=true
+
+                      for f in **/yarn.lock; do
+                        copyYARN=true
+                      done
+
+                      # for f in **/package-lock.json; do
+                      #   copyNPM=true
+                      #   echo "Building modules for: ${f}"
+                      #   cd `dirname ${f}`
+                      #   npm install
+                      #   cd ${currentDirectory}
+                      # done
+
+                      if [[ ${copyYARN} ]]; then
+                        echo "Need to copy YARN"
+                        copyYARN=`which yarn`
+                        cp ${copyYARN} ${TOOLS_DIRECTORY}
+                      fi
+
+                      if [[ ${copyNPM} ]]; then
+                        echo "Need to copy NPM"
+                        copyNPM=`which npm`
+                        cp ${copyNPM} ${TOOLS_DIRECTORY}
+                      fi
+                      if [[ ${copyPNPM} ]]; then
+                        npm install -g pnpm
+                        echo "Need to copy PNPM"
+                        copyPNPM=`which pnpm`
+                        cp ${copyPNPM} ${TOOLS_DIRECTORY}
+                      fi
+
+                      chmod +x ${TOOLS_DIRECTORY}
+
+                      # rm -rf **/yarn.lock
+                    envVariables:
+                      TOOLS_DIRECTORY: <+stage.variables.SHARED_ARTIFACTS>/tools
+                  type: Run
+                  when:
+                    stageStatus: Success
+              - parallel:
+                  - stepGroup:
+                      steps:
+                        - step:
+                            type: Run
+                            name: Scan
+                            identifier: Scan
+                            spec:
+                              connectorRef: account.harnessImage
+                              image: returntocorp/semgrep
+                              shell: Sh
+                              command: semgrep --sarif --config auto -o ${INJESTION_FILE} /harness ${CLI_ARGUMENTS}
+                              envVariables:
+                                INJESTION_FILE: <+execution.steps.Semgrep_SAST.variables.SCAN_INJESTION_FILE>
+                                CLI_ARGUMENTS: <+execution.steps.Semgrep_SAST.variables.CLI_ARGUMENTS>
+                              resources:
+                                limits:
+                                  memory: 2Gi
+                        - step:
+                            type: Semgrep
+                            name: Ingest
+                            identifier: Ingest
+                            spec:
+                              mode: ingestion
+                              config: default
+                              target:
+                                name: <+execution.steps.Semgrep_SAST.variables.SCAN_TARGET>
+                                type: repository
+                                variant: <+execution.steps.Semgrep_SAST.variables.SCAN_VARIANT>
+                              advanced:
+                                log:
+                                  level: debug
+                              ingestion:
+                                file: <+execution.steps.Semgrep_SAST.variables.SCAN_INJESTION_FILE>
+                            enforce:
+                              policySets:
+                                - Scan_Policy_Gates
+                          isContainerStepGroup: false
+                      variables:
+                        - name: SCAN_TARGET
+                          type: String
+                          value: <+pipeline.properties.ci.codebase.repoName>
+                          description: Provide the STO Target name for this scan target
+                          required: true
+                        - name: SCAN_VARIANT
+                          type: String
+                          value: <+stage.variables.CODEBASE>
+                          description: ""
+                          required: true
+                          default: <+codebase.branch>
+                        - name: SCAN_INJESTION_FILE
+                          type: String
+                          value: /harness/scan_results.sarif
+                          description: Enter the name of the ingestion file that should be created and consumed.  Default file is '/harness/scan_results.sarif'
+                          required: true
+                          default: /harness/scan_results.sarif
+                        - name: CLI_ARGUMENTS
+                          type: String
+                          value: <+execution.steps.Security_Global_Scanner_Management.steps.Download_Overrides_Manifest.output.outputVariables.SEMGREP_ARGS>
+                          description: ""
+                          required: false
+                      stageType: SecurityTests
+                      name: Semgrep SAST
+                      identifier: Semgrep_SAST
+                  - stepGroup:
+                      steps:
+                        - step:
+                            type: Owasp
+                            name: Scan
+                            identifier: Scan
+                            spec:
+                              mode: orchestration
+                              config: default
+                              target:
+                                type: repository
+                                name: <+execution.steps.OWASP_Dependency_Check.variables.SCAN_TARGET>
+                                variant: <+execution.steps.OWASP_Dependency_Check.variables.SCAN_VARIANT>
+                              advanced:
+                                log:
+                                  level: debug
+                                args:
+                                  cli: <+execution.steps.OWASP_Dependency_Check.variables.CLI_ARGUMENTS>
+                              resources:
+                                limits:
+                                  memory: 2Gi
+                              imagePullPolicy: Always
+                            enforce:
+                              policySets:
+                                - Scan_Policy_Gates
+                      variables:
+                        - name: SCAN_TARGET
+                          type: String
+                          value: <+pipeline.properties.ci.codebase.repoName>
+                          description: Provide the STO Target name for this scan target
+                          required: true
+                        - name: SCAN_VARIANT
+                          type: String
+                          value: <+stage.variables.CODEBASE>
+                          description: ""
+                          required: true
+                          default: <+codebase.branch>
+                        - name: TOOLS_DIRECTORY
+                          type: String
+                          value: <+stage.variables.SHARED_ARTIFACTS>/tools
+                          description: ""
+                          required: false
+                          default: /var/run/tools
+                        - name: CLI_ARGUMENTS
+                          type: String
+                          value: <+execution.steps.Security_Global_Scanner_Management.steps.Download_Overrides_Manifest.output.outputVariables.OWASP_ARGS>
+                          description: ""
+                          required: false
+                      stageType: SecurityTests
+                      name: OWASP Dependency Check
+                      identifier: OWASP_Dependency_Check
+                  - stepGroup:
+                      steps:
+                        - step:
+                            type: Gitleaks
+                            name: Scan
+                            identifier: Scan
+                            spec:
+                              mode: orchestration
+                              config: default
+                              target:
+                                type: repository
+                                name: <+execution.steps.OWASP_Dependency_Check.variables.SCAN_TARGET>
+                                variant: <+execution.steps.OWASP_Dependency_Check.variables.SCAN_VARIANT>
+                              advanced:
+                                log:
+                                  level: info
+                                args:
+                                  cli: <+execution.steps.GitLeaks_Scanner.variables.CLI_ARGUMENTS>
+                            enforce:
+                              policySets:
+                                - Scan_Policy_Gates
+                      variables:
+                        - name: SCAN_TARGET
+                          type: String
+                          value: <+pipeline.properties.ci.codebase.repoName>
+                          description: Provide the STO Target name for this scan target
+                          required: true
+                        - name: SCAN_VARIANT
+                          type: String
+                          value: <+stage.variables.CODEBASE>
+                          description: ""
+                          required: true
+                          default: <+codebase.branch>
+                        - name: CLI_ARGUMENTS
+                          type: String
+                          value: <+execution.steps.Security_Global_Scanner_Management.steps.Download_Overrides_Manifest.output.outputVariables.GITLEAKS_ARGS>
+                          description: ""
+                          required: false
+                      stageType: SecurityTests
+                      name: GitLeaks Scanner
+                      identifier: GitLeaks_Scanner
+          infrastructure:
+            type: KubernetesDirect
+            spec:
+              connectorRef: account.harness_workloads_aks
+              namespace: harnessci
+              automountServiceAccountToken: true
+              nodeSelector: {}
+              os: Linux
+          sharedPaths:
+            - <+stage.variables.SHARED_ARTIFACTS>
+        type: CI
+        variables:
+          - name: CODEBASE
+            type: String
+            default: <+codebase.branch>
+            description: ""
+            required: true
+            value: <+codebase.branch>
+          - name: SHARED_ARTIFACTS
+            type: String
+            description: ""
+            required: true
+            value: /shared/customer_artifacts
+        name: Scan Repository
+        identifier: Scan_Repository
+        description: ""
+  properties:
+    ci:
+      codebase:
+        connectorRef: account.default_github_access
+        repoName: goodrum-harness/demo-react-node-postgres
+        build: <+input>
