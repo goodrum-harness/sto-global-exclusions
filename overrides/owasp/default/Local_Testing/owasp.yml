@@ -1,5 +1,5 @@
 ---
-binaries: []
+binaries: {}
 exclusions:
   - "backend/**"
 remove_files:

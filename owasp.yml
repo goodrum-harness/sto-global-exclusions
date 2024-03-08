@@ -4,6 +4,5 @@ binaries:
   pnpm: /shared/customer_artifacts/tools/pnpm
 exclusions:
   - "**/*.exe"
-  - "backend/**"
 remove_files:
   - "**/yarn.lock"
