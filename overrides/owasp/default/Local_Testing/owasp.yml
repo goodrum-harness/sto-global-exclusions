@@ -1,0 +1,6 @@
+---
+binaries: []
+exclusions:
+  - "backend/**"
+remove_files:
+  - "**/Makefile"
