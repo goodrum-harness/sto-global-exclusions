@@ -48,4 +48,5 @@ push:
 
 .PHONY: run
 run:
-	(${DOCKER_RUN} /app/sto-override-handler.sh -w /harness -s owasp -o default -p Local_Testing -P jim)
+	@(${DOCKER_RUN} /app/sto-override-handler.sh -w /harness -s owasp -o default -p Local_Testing -P jim)
+	@(cat output_file)

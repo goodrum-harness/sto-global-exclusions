@@ -89,18 +89,21 @@ do
     OUTPUT="${OUTPUT} --$key $(echo $binaries | jq -rc --arg keyName $key '.[$keyName]')"
 done
 
-for i in $(echo ${globals_scanner_file} | jq -c '.exclusions // []' | jq -c '.[]');
+readarray -t exclusions_list < <(jq -c '.exclusions // []' <<< "$globals_scanner_file" | jq -r '.[] | @sh')
+for i in "${exclusions_list[@]}";
 do
     OUTPUT="${OUTPUT} --exclude $i";
 done
 
-for remove_file in $(echo ${globals_scanner_file} | jq -c '.remove_files // []' | jq -c '.[]');
+readarray -t remove_files_list < <(jq -c '.remove_files // []' <<< "$globals_scanner_file" | jq -r '.[] | @sh')
+for remove_file in "${remove_files_list[@]}";
 do
     echo "Recursively removing any files that match - ${remove_file}"
     rm -rf /harness/$(echo $remove_file | tr -d '"');
 done
 
-for argument in $(echo ${globals_scanner_file} | jq -c '.standard_args // []' | jq -c '.[]');
+readarray -t standard_args_list < <(jq -c '.standard_args // []' <<< "$globals_scanner_file" | jq -r '.[] | @sh')
+for argument in "${standard_args_list[@]}";
 do
     fmt_arg=$(echo $argument | tr -d '"')
     OUTPUT="${OUTPUT} ${fmt_arg}";
